@@ -36,15 +36,83 @@ for user in os.getenv('AUTHORIZED_USERS', '').split(','):
 # Database connection function
 def get_db_connection():
     try:
-        DATABASE_URL = os.getenv('DATABASE_URL')
-        if not DATABASE_URL:
-            raise ValueError("DATABASE_URL environment variable is not set")
-            
-        conn = psycopg.connect(DATABASE_URL)
+        # Get individual connection parameters
+        db_params = {
+            'dbname': os.getenv('PGDATABASE', 'postgres'),
+            'user': os.getenv('PGUSER', 'postgres'),
+            'password': os.getenv('PGPASSWORD'),
+            'host': os.getenv('PGHOST'),
+            'port': os.getenv('PGPORT', '5432'),
+            'sslmode': 'require',
+            'connect_timeout': 30
+        }
+        
+        # Build connection string
+        conn_string = (
+            f"postgresql://{db_params['user']}:{db_params['password']}"
+            f"@{db_params['host']}:{db_params['port']}/{db_params['dbname']}"
+        )
+        
+        conn = psycopg.connect(
+            conn_string,
+            sslmode='require',
+            connect_timeout=30,
+            application_name='chip_order_bot'
+        )
         return conn
     except psycopg.Error as e:
         logger.error(f"Database connection error: {e}")
         raise e
+
+# Initialize database tables
+def init_db():
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            # Create clients table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clients (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    username VARCHAR(100),
+                    location VARCHAR(50) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create products table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    type VARCHAR(50) NOT NULL,
+                    price DECIMAL(10,2) NOT NULL,
+                    orig_price DECIMAL(10,2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create orders table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    id SERIAL PRIMARY KEY,
+                    client_id INTEGER REFERENCES clients(id),
+                    product_id INTEGER REFERENCES products(id),
+                    quantity INTEGER NOT NULL,
+                    total_price DECIMAL(10,2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            conn.commit()
+        conn.close()
+        logger.info("Database initialized successfully")
+    except psycopg.Error as e:
+        logger.error(f"Database initialization error: {e}")
+        raise e
+
+# Initialize database on startup
+init_db()
 
 async def check_auth(update: Update) -> bool:
     user_id = update.effective_user.id
