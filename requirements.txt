@@ -1,3 +1,4 @@
-python-telegram-bot==20.7
-psycopg==3.2.3
-python-dotenv==1.0.0 
+python-telegram-bot==20.8
+psycopg==3.1.18
+psycopg-binary==3.1.18
+python-dotenv==1.0.1 

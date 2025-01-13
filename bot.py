@@ -36,9 +36,11 @@ for user in os.getenv('AUTHORIZED_USERS', '').split(','):
 # Database connection function
 def get_db_connection():
     try:
-        conn = psycopg.connect(
-            "postgresql://postgres:postgres@127.0.0.1:5432/tg"
-        )
+        DATABASE_URL = os.getenv('DATABASE_URL')
+        if not DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable is not set")
+            
+        conn = psycopg.connect(DATABASE_URL)
         return conn
     except psycopg.Error as e:
         logger.error(f"Database connection error: {e}")
