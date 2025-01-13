@@ -36,29 +36,11 @@ for user in os.getenv('AUTHORIZED_USERS', '').split(','):
 # Database connection function
 def get_db_connection():
     try:
-        # Get individual connection parameters
-        db_params = {
-            'dbname': os.getenv('PGDATABASE', 'postgres'),
-            'user': os.getenv('PGUSER', 'postgres'),
-            'password': os.getenv('PGPASSWORD'),
-            'host': os.getenv('PGHOST'),
-            'port': os.getenv('PGPORT', '5432'),
-            'sslmode': 'require',
-            'connect_timeout': 30
-        }
+        DATABASE_URL = os.getenv('DATABASE_URL')
+        if not DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable is not set")
         
-        # Build connection string
-        conn_string = (
-            f"postgresql://{db_params['user']}:{db_params['password']}"
-            f"@{db_params['host']}:{db_params['port']}/{db_params['dbname']}"
-        )
-        
-        conn = psycopg.connect(
-            conn_string,
-            sslmode='require',
-            connect_timeout=30,
-            application_name='chip_order_bot'
-        )
+        conn = psycopg.connect(DATABASE_URL)
         return conn
     except psycopg.Error as e:
         logger.error(f"Database connection error: {e}")
