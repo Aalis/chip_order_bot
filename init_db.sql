@@ -18,7 +18,8 @@ CREATE TABLE products (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     type VARCHAR(50) CHECK (type IN ('plastic', 'leather', 'bracelet')) NOT NULL,
-    price DECIMAL(10, 2) NOT NULL
+    price DECIMAL(10, 2) NOT NULL,
+    orig_price DECIMAL(10, 2) NOT NULL
 );
 
 -- Create orders table
@@ -32,8 +33,8 @@ CREATE TABLE orders (
 );
 
 -- Insert sample products
-INSERT INTO products (name, type, price) VALUES
-    ('Plastic', 'plastic', 100.00),
-    ('Leather', 'leather', 300.00),
-    ('Bracelet', 'bracelet', 200.00); 
+INSERT INTO products (name, type, price, orig_price) VALUES
+    ('Plastic', 'plastic', 20.00, 10.00),
+    ('Leather', 'leather', 300.00, 150.00),
+    ('Bracelet', 'bracelet', 200.00, 100.00); 
 
