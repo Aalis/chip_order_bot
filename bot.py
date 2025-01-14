@@ -11,6 +11,7 @@ import psycopg
 from psycopg import Error
 import csv
 import io
+import time
 
 # Load environment variables
 load_dotenv()
@@ -40,7 +41,18 @@ def get_db_connection():
         if not DATABASE_URL:
             raise ValueError("DATABASE_URL environment variable is not set")
         
-        conn = psycopg.connect(DATABASE_URL)
+        # Parse connection parameters from URL
+        params = {
+            'dbname': 'railway',
+            'user': 'postgres',
+            'password': 'ljnPLKNJuMbSPXvfhxKpweLgaqKBYfmg',
+            'host': 'junction.proxy.rlwy.net',
+            'port': '50684',
+            'connect_timeout': 30,
+            'application_name': 'chip_order_bot'
+        }
+        
+        conn = psycopg.connect(**params)
         return conn
     except psycopg.Error as e:
         logger.error(f"Database connection error: {e}")
@@ -48,53 +60,66 @@ def get_db_connection():
 
 # Initialize database tables
 def init_db():
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            # Create clients table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS clients (
-                    id SERIAL PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL,
-                    username VARCHAR(100),
-                    location VARCHAR(50) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create products table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    id SERIAL PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL,
-                    type VARCHAR(50) NOT NULL,
-                    price DECIMAL(10,2) NOT NULL,
-                    orig_price DECIMAL(10,2) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create orders table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS orders (
-                    id SERIAL PRIMARY KEY,
-                    client_id INTEGER REFERENCES clients(id),
-                    product_id INTEGER REFERENCES products(id),
-                    quantity INTEGER NOT NULL,
-                    total_price DECIMAL(10,2) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            conn.commit()
-        conn.close()
-        logger.info("Database initialized successfully")
-    except psycopg.Error as e:
-        logger.error(f"Database initialization error: {e}")
-        raise e
+    retries = 3
+    retry_delay = 5  # seconds
+    
+    for attempt in range(retries):
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                # Create clients table if not exists
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS clients (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL,
+                        username VARCHAR(100),
+                        location VARCHAR(50) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create products table if not exists
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS products (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(100) NOT NULL,
+                        type VARCHAR(50) NOT NULL,
+                        price DECIMAL(10,2) NOT NULL,
+                        orig_price DECIMAL(10,2) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create orders table if not exists
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS orders (
+                        id SERIAL PRIMARY KEY,
+                        client_id INTEGER REFERENCES clients(id),
+                        product_id INTEGER REFERENCES products(id),
+                        quantity INTEGER NOT NULL,
+                        total_price DECIMAL(10,2) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                conn.commit()
+            conn.close()
+            logger.info("Database initialized successfully")
+            return
+        except psycopg.Error as e:
+            logger.error(f"Database initialization error (attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(retry_delay)
+            else:
+                raise e
 
 # Initialize database on startup
-init_db()
+try:
+    init_db()
+    logger.info("Database initialization completed")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+    # Continue running the bot even if database init fails
 
 async def check_auth(update: Update) -> bool:
     user_id = update.effective_user.id
@@ -454,13 +479,13 @@ async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 SELECT 
                     p.name as product_name,
                     SUM(o.quantity) as total_quantity,
-                    SUM(o.total_price) as total_price,
+                    SUM(o.total_price) as total_revenue,
                     p.orig_price * SUM(o.quantity) as total_cost,
                     SUM(o.total_price) - (p.orig_price * SUM(o.quantity)) as profit
                 FROM orders o
                 JOIN products p ON o.product_id = p.id
                 GROUP BY p.name, p.orig_price
-                ORDER BY p.name
+                ORDER BY profit DESC
             """)
             rows = cur.fetchall()
         conn.close()
@@ -475,11 +500,27 @@ async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         writer.writerow([
             'Product Name',
             'Total Quantity',
-            'Total Revenue',
-            'Total Cost',
-            'Profit'
+            'Total Revenue (₴)',
+            'Total Cost (₴)',
+            'Profit (₴)'
         ])
         writer.writerows(rows)
+        
+        # Calculate totals
+        total_quantity = sum(row[1] for row in rows)
+        total_revenue = sum(row[2] for row in rows)
+        total_cost = sum(row[3] for row in rows)
+        total_profit = sum(row[4] for row in rows)
+        
+        # Add totals row
+        writer.writerow([''])  # Empty row for spacing
+        writer.writerow([
+            'TOTAL',
+            total_quantity,
+            f'{total_revenue:.2f}',
+            f'{total_cost:.2f}',
+            f'{total_profit:.2f}'
+        ])
         
         # Convert to bytes
         output.seek(0)
@@ -489,7 +530,7 @@ async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_document(
             document=io.BytesIO(bytes_output),
             filename='statistics.csv',
-            caption='Here are the summarized statistics with profit calculations.'
+            caption=f'Statistics Summary:\nTotal Revenue: ₴{total_revenue:.2f}\nTotal Cost: ₴{total_cost:.2f}\nTotal Profit: ₴{total_profit:.2f}'
         )
         
     except Error as e:
