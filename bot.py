@@ -154,6 +154,9 @@ async def command_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_auth(update):
         return ConversationHandler.END
     
+    # Clear any existing conversation data
+    context.user_data.clear()
+    
     await update.message.reply_text("👤 Please enter the customer name:")
     return NAME
 
@@ -230,6 +233,9 @@ async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_auth(update):
         return ConversationHandler.END
+    
+    # Clear any existing conversation data
+    context.user_data.clear()
     
     query = update.callback_query
     await query.answer()
@@ -538,6 +544,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", command_stats))
     
+    # Create conversation handler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('new_order', command_new_order),
@@ -551,11 +558,16 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_selection)
             ]
         },
-        fallbacks=[CommandHandler('cancel', cancel)]
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            CommandHandler('start', start),
+            CallbackQueryHandler(export_orders, pattern='^export_orders$')
+        ],
+        allow_reentry=True
     )
 
+    # Add conversation handler
     application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(export_orders, pattern='^export_orders$'))
 
     # Start the bot
     print("Starting bot...")
