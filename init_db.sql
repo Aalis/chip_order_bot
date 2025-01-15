@@ -1,7 +1,3 @@
--- Drop existing tables
-DROP TABLE IF EXISTS orders;
-DROP TABLE IF EXISTS products;
-DROP TABLE IF EXISTS clients;
 
 -- Create clients table
 CREATE TABLE clients (
@@ -34,7 +30,7 @@ CREATE TABLE orders (
 
 -- Insert sample products
 INSERT INTO products (name, type, price, orig_price) VALUES
-    ('Plastic', 'plastic', 20.00, 10.00),
+    ('Plastic', 'plastic', 100.00, 10.00),
     ('Leather', 'leather', 300.00, 150.00),
     ('Bracelet', 'bracelet', 200.00, 100.00); 
 

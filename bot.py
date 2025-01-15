@@ -140,13 +140,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.set_my_commands(commands)
         
     keyboard = [
-        [InlineKeyboardButton("+ Add New Order", callback_data='new_order')],
-        [InlineKeyboardButton("📋 Download Statistics", callback_data='export_orders')]
+        [InlineKeyboardButton("➕ Add New Order", callback_data='new_order')],
+        [InlineKeyboardButton("📊 Download Statistics", callback_data='export_orders')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        'Welcome to the Order Management Bot!\n'
-        'What would you like to do?',
+        '👋 Welcome to the Order Management Bot!\n'
+        '🔽 What would you like to do?',
         reply_markup=reply_markup
     )
 
@@ -154,7 +154,7 @@ async def command_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_auth(update):
         return ConversationHandler.END
     
-    await update.message.reply_text("Please enter the customer name:")
+    await update.message.reply_text("👤 Please enter the customer name:")
     return NAME
 
 async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -233,7 +233,7 @@ async def new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text("Please enter the customer name:")
+    await query.message.reply_text("👤 Please enter the customer name:")
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -260,7 +260,7 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏡 Genuez", callback_data='location:Genuez')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Please select the customer location:", reply_markup=reply_markup)
+    await update.message.reply_text("📍 Select customer location:", reply_markup=reply_markup)
     return LOCATION
 
 async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -282,7 +282,7 @@ async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         if not products:
-            await query.message.reply_text("No products available.")
+            await query.message.reply_text("❌ No products available.")
             return ConversationHandler.END
         
         # Create keyboard with product buttons - one per row
@@ -302,7 +302,7 @@ async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text(
-            "Select products to add to cart:",
+            "🛍️ Select products to add to cart:",
             reply_markup=reply_markup
         )
         
@@ -317,7 +317,7 @@ async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Error as e:
         logger.error(f"Database error: {e}")
-        await query.message.reply_text("Sorry, there was an error. Please try again.")
+        await query.message.reply_text("❌ Sorry, there was an error. Please try again.")
         return ConversationHandler.END
 
 async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -334,14 +334,14 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
             context.user_data['current_product'] = product_id
             
             await query.message.reply_text(
-                f"Enter quantity for {product['name']} (₴{product['price']}):"
+                f"📦 Enter quantity for {product['name']} (₴{product['price']}):"
             )
             return PRODUCT_SELECTION
             
         elif query.data == 'confirm_order':
             cart = context.user_data.get('cart', {})
             if not cart:
-                await query.message.reply_text("Please add at least one product to cart.")
+                await query.message.reply_text("⚠️ Please add at least one product to cart.")
                 return PRODUCT_SELECTION
             
             return await process_order(update, context)
@@ -350,12 +350,12 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
         try:
             quantity = int(update.message.text)
             if quantity <= 0:
-                await update.message.reply_text("Please enter a positive number.")
+                await update.message.reply_text("⚠️ Please enter a positive number.")
                 return PRODUCT_SELECTION
             
             product_id = context.user_data.get('current_product')
             if not product_id:
-                await update.message.reply_text("Please select a product first.")
+                await update.message.reply_text("⚠️ Please select a product first.")
                 return PRODUCT_SELECTION
             
             product = context.user_data['products'][product_id]
@@ -372,7 +372,7 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
                 subtotal = item['quantity'] * item['price']
                 total += subtotal
                 cart_text += f"• {item['name']}: {item['quantity']} × ₴{item['price']} = ₴{subtotal}\n"
-            cart_text += f"\n💰 Total: ₴{total:.2f}\n\nSelect more products or confirm order:"
+            cart_text += f"\n💰 Total: ₴{total:.2f}\n\n🔽 Select more products or confirm order:"
             
             # Recreate keyboard with product buttons - one per row
             keyboard = []
@@ -395,7 +395,7 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
             return PRODUCT_SELECTION
             
         except ValueError:
-            await update.message.reply_text("Please enter a valid number.")
+            await update.message.reply_text("⚠️ Please enter a valid number.")
             return PRODUCT_SELECTION
 
 async def process_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -422,32 +422,32 @@ async def process_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         # Send confirmation
-        confirmation = f"Order confirmed!\n\n"
-        confirmation += f"Customer: {context.user_data['name']}\n"
-        confirmation += f"Location: {context.user_data['location']}\n\n"
-        confirmation += "Products:\n"
+        confirmation = f"✅ Order confirmed!\n\n"
+        confirmation += f"👤 Customer: {context.user_data['name']}\n"
+        confirmation += f"📍 Location: {context.user_data['location']}\n\n"
+        confirmation += "🛍️ Products:\n"
         total_price = 0
         for item in cart.values():
             subtotal = item['quantity'] * item['price']
             total_price += subtotal
-            confirmation += f"• {item['name']}: {item['quantity']} x ₴{item['price']} = ₴{subtotal}\n"
-        confirmation += f"\nTotal Price: ₴{total_price:.2f}"
+            confirmation += f"• {item['name']}: {item['quantity']} × ₴{item['price']} = ₴{subtotal}\n"
+        confirmation += f"\n💰 Total Price: ₴{total_price:.2f}"
         
         await query.message.reply_text(confirmation)
         
         # Clear user data and show main menu
         context.user_data.clear()
         keyboard = [
-            [InlineKeyboardButton("+ Add New Order", callback_data='new_order')],
-            [InlineKeyboardButton("📋 Download Statistics", callback_data='export_orders')]
+            [InlineKeyboardButton("➕ Add New Order", callback_data='new_order')],
+            [InlineKeyboardButton("📊 Download Statistics", callback_data='export_orders')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text("What would you like to do next?", reply_markup=reply_markup)
+        await query.message.reply_text("🔽 What would you like to do next?", reply_markup=reply_markup)
         return ConversationHandler.END
         
     except Error as e:
         logger.error(f"Database error: {e}")
-        await query.message.reply_text("Sorry, there was an error saving your order. Please try again.")
+        await query.message.reply_text("❌ Sorry, there was an error saving your order. Please try again.")
         return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -455,7 +455,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
     context.user_data.clear()
-    await update.message.reply_text("Operation cancelled.")
+    await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
 async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
