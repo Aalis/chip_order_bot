@@ -544,6 +544,9 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", command_stats))
     
+    # Add export_orders handler before conversation handler
+    application.add_handler(CallbackQueryHandler(export_orders, pattern='^export_orders$'))
+    
     # Create conversation handler
     conv_handler = ConversationHandler(
         entry_points=[
@@ -560,8 +563,7 @@ def main():
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            CommandHandler('start', start),
-            CallbackQueryHandler(export_orders, pattern='^export_orders$')
+            CommandHandler('start', start)
         ],
         allow_reentry=True
     )
