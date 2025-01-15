@@ -538,12 +538,10 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", command_stats))
     
-    # Add the callback handler for new_order before the conversation handler
-    application.add_handler(CallbackQueryHandler(new_order, pattern='^new_order$'))
-    
     conv_handler = ConversationHandler(
         entry_points=[
-            CommandHandler('new_order', command_new_order)
+            CommandHandler('new_order', command_new_order),
+            CallbackQueryHandler(new_order, pattern='^new_order$')
         ],
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
