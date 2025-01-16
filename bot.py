@@ -301,11 +301,6 @@ async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             ])
         
-        # Add confirm button at the bottom
-        keyboard.append([
-            InlineKeyboardButton("✅ Confirm Order", callback_data='confirm_order')
-        ])
-        
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text(
             "🛍️ Select products to add to cart:",
@@ -390,10 +385,11 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
                     )
                 ])
             
-            # Add confirm button
-            keyboard.append([
-                InlineKeyboardButton("✅ Confirm Order", callback_data='confirm_order')
-            ])
+            # Add confirm button only if cart is not empty
+            if context.user_data['cart']:
+                keyboard.append([
+                    InlineKeyboardButton("✅ Confirm Order", callback_data='confirm_order')
+                ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(cart_text, reply_markup=reply_markup)
