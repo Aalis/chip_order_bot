@@ -1,6 +1,8 @@
 import os
 import logging
 from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -20,8 +22,144 @@ load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# States for conversation
+# Constants
 NAME, LOCATION, PRODUCT_SELECTION, QUANTITY = range(4)
+
+EMOJIS = {
+    'CART': '🛒',
+    'MONEY': '💰',
+    'PRODUCT': '💠',
+    'CONFIRM': '✅',
+    'WARNING': '⚠️',
+    'ERROR': '❌',
+    'PERSON': '👤',
+    'LOCATION': '📍',
+    'SHOPPING': '🛍️',
+    'PACKAGE': '📦',
+    'ARROW': '🔽',
+    'WAVE': '👋',
+    'PLUS': '➕',
+    'STATS': '📊'
+}
+
+BUILDINGS = {
+    '4Seasons': '🏢',
+    'Omega': '🏬',
+    'Kamanina': '🏘️',
+    'Genuez': '🏡'
+}
+
+@dataclass
+class Product:
+    id: int
+    name: str
+    price: float
+
+@dataclass
+class CartItem:
+    name: str
+    price: float
+    quantity: int
+
+class Database:
+    def __init__(self):
+        self.DATABASE_URL = os.getenv('DATABASE_URL')
+        if not self.DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable is not set")
+
+    def get_connection(self) -> psycopg.Connection:
+        return psycopg.connect(
+            self.DATABASE_URL,
+            connect_timeout=30,
+            application_name='chip_order_bot'
+        )
+
+    def get_products(self) -> List[Product]:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, price FROM products ORDER BY name")
+                return [Product(id=id, name=name, price=price) for id, name, price in cur.fetchall()]
+
+    def save_order(self, client_name: str, username: Optional[str], location: str, cart: Dict[str, CartItem]) -> None:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Save client info
+                cur.execute(
+                    "INSERT INTO clients (name, username, location) VALUES (%s, %s, %s) RETURNING id",
+                    (client_name, username, location)
+                )
+                client_id = cur.fetchone()[0]
+                
+                # Save each order
+                for product_id, item in cart.items():
+                    cur.execute(
+                        "INSERT INTO orders (client_id, product_id, quantity, total_price) VALUES (%s, %s, %s, %s)",
+                        (client_id, int(product_id), item.quantity, item.quantity * item.price)
+                    )
+                conn.commit()
+
+    def get_statistics(self) -> Tuple[List[Tuple], float, float, float, float]:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        p.name as product_name,
+                        SUM(o.quantity) as total_quantity,
+                        SUM(o.total_price) as total_revenue,
+                        p.orig_price * SUM(o.quantity) as total_cost,
+                        SUM(o.total_price) - (p.orig_price * SUM(o.quantity)) as profit
+                    FROM orders o
+                    JOIN products p ON o.product_id = p.id
+                    GROUP BY p.name, p.orig_price
+                    ORDER BY profit DESC
+                """)
+                rows = cur.fetchall()
+                
+                if not rows:
+                    return [], 0, 0, 0, 0
+                
+                total_quantity = sum(row[1] for row in rows)
+                total_revenue = sum(row[2] for row in rows)
+                total_cost = sum(row[3] for row in rows)
+                total_profit = sum(row[4] for row in rows)
+                
+                return rows, total_quantity, total_revenue, total_cost, total_profit
+
+# Initialize database
+db = Database()
+
+def create_product_keyboard(products: List[Product], show_confirm: bool = False) -> InlineKeyboardMarkup:
+    """Create a keyboard with product buttons and optional confirm button."""
+    keyboard = [
+        [InlineKeyboardButton(
+            f"{EMOJIS['PRODUCT']} {product.name} - ₴{product.price}",
+            callback_data=f'input_quantity:{product.id}'
+        )]
+        for product in products
+    ]
+    
+    if show_confirm:
+        keyboard.append([
+            InlineKeyboardButton(f"{EMOJIS['CONFIRM']} Confirm Order", callback_data='confirm_order')
+        ])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def format_cart_text(cart: Dict[str, CartItem]) -> Tuple[str, float]:
+    """Format cart contents and calculate total."""
+    total = 0
+    cart_lines = []
+    
+    for item in cart.values():
+        subtotal = item.quantity * item.price
+        total += subtotal
+        cart_lines.append(f"• {item.name}: {item.quantity} × ₴{item.price} = ₴{subtotal}")
+    
+    cart_text = f"{EMOJIS['CART']} Cart:\n" + "\n".join(cart_lines)
+    cart_text += f"\n\n{EMOJIS['MONEY']} Total: ₴{total:.2f}"
+    cart_text += f"\n\n{EMOJIS['ARROW']} Select more products or confirm order:"
+    
+    return cart_text, total
 
 # Add authorized users list
 AUTHORIZED_USERS_IDS = set()
@@ -33,86 +171,6 @@ for user in os.getenv('AUTHORIZED_USERS', '').split(','):
         AUTHORIZED_USERS_USERNAMES.add(user.lower())
     elif user.isdigit():
         AUTHORIZED_USERS_IDS.add(int(user))
-
-# Database connection function
-def get_db_connection():
-    try:
-        DATABASE_URL = os.getenv('DATABASE_URL')
-        if not DATABASE_URL:
-            raise ValueError("DATABASE_URL environment variable is not set")
-        
-        conn = psycopg.connect(
-            DATABASE_URL,
-            connect_timeout=30,
-            application_name='chip_order_bot'
-        )
-        return conn
-    except psycopg.Error as e:
-        logger.error(f"Database connection error: {e}")
-        raise e
-
-# Initialize database tables
-def init_db():
-    retries = 3
-    retry_delay = 5  # seconds
-    
-    for attempt in range(retries):
-        try:
-            conn = get_db_connection()
-            with conn.cursor() as cur:
-                # Create clients table if not exists
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS clients (
-                        id SERIAL PRIMARY KEY,
-                        name VARCHAR(100) NOT NULL,
-                        username VARCHAR(100),
-                        location VARCHAR(50) NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Create products table if not exists
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS products (
-                        id SERIAL PRIMARY KEY,
-                        name VARCHAR(100) NOT NULL,
-                        type VARCHAR(50) NOT NULL,
-                        price DECIMAL(10,2) NOT NULL,
-                        orig_price DECIMAL(10,2) NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Create orders table if not exists
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS orders (
-                        id SERIAL PRIMARY KEY,
-                        client_id INTEGER REFERENCES clients(id),
-                        product_id INTEGER REFERENCES products(id),
-                        quantity INTEGER NOT NULL,
-                        total_price DECIMAL(10,2) NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                conn.commit()
-            conn.close()
-            logger.info("Database initialized successfully")
-            return
-        except psycopg.Error as e:
-            logger.error(f"Database initialization error (attempt {attempt + 1}/{retries}): {e}")
-            if attempt < retries - 1:
-                time.sleep(retry_delay)
-            else:
-                raise e
-
-# Initialize database on startup
-try:
-    init_db()
-    logger.info("Database initialization completed")
-except Exception as e:
-    logger.error(f"Failed to initialize database: {e}")
-    # Continue running the bot even if database init fails
 
 async def check_auth(update: Update) -> bool:
     user_id = update.effective_user.id
@@ -160,31 +218,16 @@ async def command_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👤 Please enter the customer name:")
     return NAME
 
-async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_auth(update):
         return
     
-    # Reuse the export_orders logic but for command
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 
-                    p.name as product_name,
-                    SUM(o.quantity) as total_quantity,
-                    SUM(o.total_price) as total_revenue,
-                    p.orig_price * SUM(o.quantity) as total_cost,
-                    SUM(o.total_price) - (p.orig_price * SUM(o.quantity)) as profit
-                FROM orders o
-                JOIN products p ON o.product_id = p.id
-                GROUP BY p.name, p.orig_price
-                ORDER BY profit DESC
-            """)
-            rows = cur.fetchall()
-        conn.close()
+        # Get statistics using Database class
+        rows, total_quantity, total_revenue, total_cost, total_profit = db.get_statistics()
         
         if not rows:
-            await update.message.reply_text("No orders found.")
+            await update.message.reply_text(f"{EMOJIS['ERROR']} No orders found.")
             return
         
         # Create CSV in memory
@@ -198,12 +241,6 @@ async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'Profit (₴)'
         ])
         writer.writerows(rows)
-        
-        # Calculate totals
-        total_quantity = sum(row[1] for row in rows)
-        total_revenue = sum(row[2] for row in rows)
-        total_cost = sum(row[3] for row in rows)
-        total_profit = sum(row[4] for row in rows)
         
         # Add totals row
         writer.writerow([''])  # Empty row for spacing
@@ -223,12 +260,17 @@ async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=io.BytesIO(bytes_output),
             filename='statistics.csv',
-            caption=f'Statistics Summary:\nTotal Revenue: ₴{total_revenue:.2f}\nTotal Cost: ₴{total_cost:.2f}\nTotal Profit: ₴{total_profit:.2f}'
+            caption=(
+                f'Statistics Summary:\n'
+                f'{EMOJIS["MONEY"]} Total Revenue: ₴{total_revenue:.2f}\n'
+                f'{EMOJIS["SHOPPING"]} Total Cost: ₴{total_cost:.2f}\n'
+                f'{EMOJIS["STATS"]} Total Profit: ₴{total_profit:.2f}'
+            )
         )
         
     except Error as e:
         logger.error(f"Database error: {e}")
-        await update.message.reply_text("Sorry, there was an error downloading statistics. Please try again.")
+        await update.message.reply_text(f"{EMOJIS['ERROR']} Sorry, there was an error downloading statistics. Please try again.")
 
 async def new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_auth(update):
@@ -269,7 +311,7 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📍 Select customer location:", reply_markup=reply_markup)
     return LOCATION
 
-async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_auth(update):
         return ConversationHandler.END
     
@@ -279,49 +321,34 @@ async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     location = query.data.split(':')[1]
     context.user_data['location'] = location
     
-    # Get products from database
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, name, price FROM products ORDER BY name")
-            products = cur.fetchall()
-        conn.close()
+        products = db.get_products()
         
         if not products:
-            await query.message.reply_text("❌ No products available.")
+            await query.message.reply_text(f"{EMOJIS['ERROR']} No products available.")
             return ConversationHandler.END
         
-        # Create keyboard with product buttons - one per row
-        keyboard = []
-        for id, name, price in products:
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"💠 {name} - ₴{price}",
-                    callback_data=f'input_quantity:{id}'
-                )
-            ])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard = create_product_keyboard(products)
         await query.message.reply_text(
-            "🛍️ Select products to add to cart:",
-            reply_markup=reply_markup
+            f"{EMOJIS['SHOPPING']} Select products to add to cart:",
+            reply_markup=keyboard
         )
         
         # Initialize cart in context
         context.user_data['cart'] = {}
         context.user_data['products'] = {
-            str(id): {'name': name, 'price': price}
-            for id, name, price in products
+            str(p.id): {'name': p.name, 'price': p.price}
+            for p in products
         }
         
         return PRODUCT_SELECTION
         
     except Error as e:
         logger.error(f"Database error: {e}")
-        await query.message.reply_text("❌ Sorry, there was an error. Please try again.")
+        await query.message.reply_text(f"{EMOJIS['ERROR']} Sorry, there was an error. Please try again.")
         return ConversationHandler.END
 
-async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_auth(update):
         return ConversationHandler.END
     
@@ -335,14 +362,14 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
             context.user_data['current_product'] = product_id
             
             await query.message.reply_text(
-                f"📦 Enter quantity for {product['name']} (₴{product['price']}):"
+                f"{EMOJIS['PACKAGE']} Enter quantity for {product['name']} (₴{product['price']}):"
             )
             return PRODUCT_SELECTION
             
         elif query.data == 'confirm_order':
             cart = context.user_data.get('cart', {})
             if not cart:
-                await query.message.reply_text("⚠️ Please add at least one product to cart.")
+                await query.message.reply_text(f"{EMOJIS['WARNING']} Please add at least one product to cart.")
                 return PRODUCT_SELECTION
             
             return await process_order(update, context)
@@ -351,105 +378,77 @@ async def handle_product_selection(update: Update, context: ContextTypes.DEFAULT
         try:
             quantity = int(update.message.text)
             if quantity <= 0:
-                await update.message.reply_text("⚠️ Please enter a positive number.")
+                await update.message.reply_text(f"{EMOJIS['WARNING']} Please enter a positive number.")
                 return PRODUCT_SELECTION
             
             product_id = context.user_data.get('current_product')
             if not product_id:
-                await update.message.reply_text("⚠️ Please select a product first.")
+                await update.message.reply_text(f"{EMOJIS['WARNING']} Please select a product first.")
                 return PRODUCT_SELECTION
             
             product = context.user_data['products'][product_id]
-            context.user_data['cart'][product_id] = {
-                'quantity': quantity,
-                'price': product['price'],
-                'name': product['name']
-            }
+            context.user_data['cart'][product_id] = CartItem(
+                name=product['name'],
+                price=product['price'],
+                quantity=quantity
+            )
             
-            # Show updated cart and product selection
-            cart_text = "🛒 Cart:\n"
-            total = 0
-            for pid, item in context.user_data['cart'].items():
-                subtotal = item['quantity'] * item['price']
-                total += subtotal
-                cart_text += f"• {item['name']}: {item['quantity']} × ₴{item['price']} = ₴{subtotal}\n"
-            cart_text += f"\n💰 Total: ₴{total:.2f}\n\n🔽 Select more products or confirm order:"
+            cart_text, _ = format_cart_text(context.user_data['cart'])
+            keyboard = create_product_keyboard(
+                [Product(id=int(pid), **p) for pid, p in context.user_data['products'].items()],
+                show_confirm=True
+            )
             
-            # Recreate keyboard with product buttons - one per row
-            keyboard = []
-            for pid, product in context.user_data['products'].items():
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"💠 {product['name']} - ₴{product['price']}",
-                        callback_data=f'input_quantity:{pid}'
-                    )
-                ])
-            
-            # Add confirm button only if cart is not empty
-            if context.user_data['cart']:
-                keyboard.append([
-                    InlineKeyboardButton("✅ Confirm Order", callback_data='confirm_order')
-                ])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(cart_text, reply_markup=reply_markup)
-            
+            await update.message.reply_text(cart_text, reply_markup=keyboard)
             return PRODUCT_SELECTION
             
         except ValueError:
-            await update.message.reply_text("⚠️ Please enter a valid number.")
+            await update.message.reply_text(f"{EMOJIS['WARNING']} Please enter a valid number.")
             return PRODUCT_SELECTION
 
-async def process_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     cart = context.user_data['cart']
     
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            # Save client info
-            cur.execute(
-                "INSERT INTO clients (name, username, location) VALUES (%s, %s, %s) RETURNING id",
-                (context.user_data['name'], context.user_data.get('username'), context.user_data['location'])
-            )
-            client_id = cur.fetchone()[0]
-            
-            # Save each order
-            for product_id, item in cart.items():
-                cur.execute(
-                    "INSERT INTO orders (client_id, product_id, quantity, total_price) VALUES (%s, %s, %s, %s)",
-                    (client_id, int(product_id), item['quantity'], item['quantity'] * item['price'])
-                )
-            conn.commit()
-        conn.close()
+        # Use the Database class to save the order
+        db.save_order(
+            client_name=context.user_data['name'],
+            username=context.user_data.get('username'),
+            location=context.user_data['location'],
+            cart=cart
+        )
         
-        # Send confirmation
-        confirmation = f"✅ Order confirmed!\n\n"
-        confirmation += f"👤 Customer: {context.user_data['name']}\n"
-        confirmation += f"📍 Location: {context.user_data['location']}\n\n"
-        confirmation += "🛍️ Products:\n"
-        total_price = 0
+        # Format confirmation message
+        cart_text, total_price = format_cart_text(cart)
+        confirmation = (
+            f"{EMOJIS['CONFIRM']} Order confirmed!\n\n"
+            f"{EMOJIS['PERSON']} Customer: {context.user_data['name']}\n"
+            f"{EMOJIS['LOCATION']} Location: {context.user_data['location']}\n\n"
+            f"{EMOJIS['SHOPPING']} Products:\n"
+        )
+        
+        # Add cart items
         for item in cart.values():
-            subtotal = item['quantity'] * item['price']
-            total_price += subtotal
-            confirmation += f"• {item['name']}: {item['quantity']} × ₴{item['price']} = ₴{subtotal}\n"
-        confirmation += f"\n💰 Total Price: ₴{total_price:.2f}"
+            subtotal = item.quantity * item.price
+            confirmation += f"• {item.name}: {item.quantity} × ₴{item.price} = ₴{subtotal}\n"
+        confirmation += f"\n{EMOJIS['MONEY']} Total Price: ₴{total_price:.2f}"
         
         await query.message.reply_text(confirmation)
         
         # Clear user data and show main menu
         context.user_data.clear()
         keyboard = [
-            [InlineKeyboardButton("➕ Add New Order", callback_data='new_order')],
-            [InlineKeyboardButton("📊 Download Statistics", callback_data='export_orders')]
+            [InlineKeyboardButton(f"{EMOJIS['PLUS']} Add New Order", callback_data='new_order')],
+            [InlineKeyboardButton(f"{EMOJIS['STATS']} Download Statistics", callback_data='export_orders')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text("🔽 What would you like to do next?", reply_markup=reply_markup)
+        await query.message.reply_text(f"{EMOJIS['ARROW']} What would you like to do next?", reply_markup=reply_markup)
         return ConversationHandler.END
         
     except Error as e:
         logger.error(f"Database error: {e}")
-        await query.message.reply_text("❌ Sorry, there was an error saving your order. Please try again.")
+        await query.message.reply_text(f"{EMOJIS['ERROR']} Sorry, there was an error saving your order. Please try again.")
         return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -460,7 +459,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
-async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_auth(update):
         return
     
@@ -468,25 +467,11 @@ async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 
-                    p.name as product_name,
-                    SUM(o.quantity) as total_quantity,
-                    SUM(o.total_price) as total_revenue,
-                    p.orig_price * SUM(o.quantity) as total_cost,
-                    SUM(o.total_price) - (p.orig_price * SUM(o.quantity)) as profit
-                FROM orders o
-                JOIN products p ON o.product_id = p.id
-                GROUP BY p.name, p.orig_price
-                ORDER BY profit DESC
-            """)
-            rows = cur.fetchall()
-        conn.close()
+        # Get statistics using Database class
+        rows, total_quantity, total_revenue, total_cost, total_profit = db.get_statistics()
         
         if not rows:
-            await query.message.reply_text("No orders found.")
+            await query.message.reply_text(f"{EMOJIS['ERROR']} No orders found.")
             return
         
         # Create CSV in memory
@@ -500,12 +485,6 @@ async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'Profit (₴)'
         ])
         writer.writerows(rows)
-        
-        # Calculate totals
-        total_quantity = sum(row[1] for row in rows)
-        total_revenue = sum(row[2] for row in rows)
-        total_cost = sum(row[3] for row in rows)
-        total_profit = sum(row[4] for row in rows)
         
         # Add totals row
         writer.writerow([''])  # Empty row for spacing
@@ -525,12 +504,17 @@ async def export_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_document(
             document=io.BytesIO(bytes_output),
             filename='statistics.csv',
-            caption=f'Statistics Summary:\nTotal Revenue: ₴{total_revenue:.2f}\nTotal Cost: ₴{total_cost:.2f}\nTotal Profit: ₴{total_profit:.2f}'
+            caption=(
+                f'Statistics Summary:\n'
+                f'{EMOJIS["MONEY"]} Total Revenue: ₴{total_revenue:.2f}\n'
+                f'{EMOJIS["SHOPPING"]} Total Cost: ₴{total_cost:.2f}\n'
+                f'{EMOJIS["STATS"]} Total Profit: ₴{total_profit:.2f}'
+            )
         )
         
     except Error as e:
         logger.error(f"Database error: {e}")
-        await query.message.reply_text("Sorry, there was an error downloading statistics. Please try again.")
+        await query.message.reply_text(f"{EMOJIS['ERROR']} Sorry, there was an error downloading statistics. Please try again.")
 
 def main():
     # Initialize the Application with the bot token
