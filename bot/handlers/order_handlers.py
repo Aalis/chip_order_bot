@@ -21,12 +21,25 @@ async def command_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message = update.message
     
-    await message.reply_text(f"{EMOJIS['PERSON']} Please enter the customer name:")
+    await message.reply_text("Enter the customer name:")
     return NAME
 
 async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['name'] = update.message.text
-    context.user_data['username'] = update.message.from_user.username
+    text = update.message.text
+    
+    # Parse name and optional username
+    if '@' in text:
+        name, username = text.split('@', 1)
+        context.user_data['name'] = name.strip()
+        # Add @ if not already present
+        username = username.strip()
+        if username:  # Only set username if it's not empty
+            context.user_data['username'] = f"@{username}" if not username.startswith('@') else username
+        else:
+            context.user_data['username'] = None
+    else:
+        context.user_data['name'] = text.strip()
+        context.user_data['username'] = None
     
     await update.message.reply_text(
         f"{EMOJIS['LOCATION']} Please select the delivery location:",
