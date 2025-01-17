@@ -1,11 +1,8 @@
 import os
-import logging
 from typing import Dict, List, Optional, Tuple
 import psycopg
 from psycopg import Error
 from ..models.models import Product, CartItem
-
-logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
@@ -29,12 +26,23 @@ class Database:
     def save_order(self, client_name: str, username: Optional[str], location: str, cart: Dict[str, CartItem]) -> None:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                # Save client info
+                # First try to find existing client
                 cur.execute(
-                    "INSERT INTO clients (name, username, location) VALUES (%s, %s, %s) RETURNING id",
-                    (client_name, username, location)
+                    "SELECT id FROM clients WHERE name = %s AND location = %s",
+                    (client_name, location)
                 )
-                client_id = cur.fetchone()[0]
+                result = cur.fetchone()
+                
+                if result:
+                    # Use existing client
+                    client_id = result[0]
+                else:
+                    # Create new client
+                    cur.execute(
+                        "INSERT INTO clients (name, username, location) VALUES (%s, %s, %s) RETURNING id",
+                        (client_name, username, location)
+                    )
+                    client_id = cur.fetchone()[0]
                 
                 # Save each order
                 for product_id, item in cart.items():
@@ -69,4 +77,7 @@ class Database:
                 total_cost = sum(row[3] for row in rows)
                 total_profit = sum(row[4] for row in rows)
                 
-                return rows, total_quantity, total_revenue, total_cost, total_profit 
+                return rows, total_quantity, total_revenue, total_cost, total_profit
+
+# Initialize database instance
+db = Database() 

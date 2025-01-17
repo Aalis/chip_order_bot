@@ -25,7 +25,7 @@ def create_location_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(
             f"{BUILDINGS[location]} {location}",
-            callback_data=f'location:{location}'
+            callback_data=location
         )]
         for location in BUILDINGS.keys()
     ]
