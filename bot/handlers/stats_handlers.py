@@ -16,7 +16,7 @@ async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     try:
         # Get statistics using Database class
-        rows, total_quantity, total_revenue, total_cost, total_profit = db.get_statistics()
+        rows, total_quantity, total_revenue, total_cost, total_profit, recent_orders = db.get_statistics()
         
         if not rows:
             await update.message.reply_text(f"{EMOJIS['ERROR']} No orders found.")
@@ -25,6 +25,12 @@ async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Create CSV in memory
         output = io.StringIO()
         writer = csv.writer(output)
+        
+        # Write product statistics
+        writer.writerow([
+            'Product Statistics',
+            '', '', '', ''  # Empty columns for alignment
+        ])
         writer.writerow([
             'Product Name',
             'Total Quantity',
@@ -43,6 +49,31 @@ async def command_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f'{total_cost:.2f}',
             f'{total_profit:.2f}'
         ])
+        
+        # Add recent orders section
+        writer.writerow([''])  # Empty row for spacing
+        writer.writerow([''])  # Empty row for spacing
+        writer.writerow([
+            'Recent Orders',
+            '', '', '', ''  # Empty columns for alignment
+        ])
+        writer.writerow([
+            'Client Name',
+            'Location',
+            'Product',
+            'Quantity',
+            'Total Price (₴)',
+            'Date'
+        ])
+        for order in recent_orders:
+            writer.writerow([
+                order[0],  # client_name
+                order[1],  # location
+                order[2],  # product_name
+                order[3],  # quantity
+                f'{order[4]:.2f}',  # total_price
+                order[5].strftime('%Y-%m-%d')  # created_at
+            ])
         
         # Convert to bytes
         output.seek(0)
