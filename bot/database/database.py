@@ -52,9 +52,10 @@ class Database:
                     )
                 conn.commit()
 
-    def get_statistics(self) -> Tuple[List[Tuple], float, float, float, float]:
+    def get_statistics(self) -> Tuple[List[Tuple], float, float, float, float, List[Tuple]]:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
+                # Get product statistics
                 cur.execute("""
                     SELECT 
                         p.name as product_name,
@@ -70,14 +71,31 @@ class Database:
                 rows = cur.fetchall()
                 
                 if not rows:
-                    return [], 0, 0, 0, 0
+                    return [], 0, 0, 0, 0, []
                 
                 total_quantity = sum(row[1] for row in rows)
                 total_revenue = sum(row[2] for row in rows)
                 total_cost = sum(row[3] for row in rows)
                 total_profit = sum(row[4] for row in rows)
                 
-                return rows, total_quantity, total_revenue, total_cost, total_profit
+                # Get recent client orders
+                cur.execute("""
+                    SELECT 
+                        c.name as client_name,
+                        c.location,
+                        p.name as product_name,
+                        o.quantity,
+                        o.total_price,
+                        o.created_at
+                    FROM orders o
+                    JOIN clients c ON o.client_id = c.id
+                    JOIN products p ON o.product_id = p.id
+                    ORDER BY o.created_at DESC, o.id DESC
+                    LIMIT 5
+                """)
+                recent_orders = cur.fetchall()
+                
+                return rows, total_quantity, total_revenue, total_cost, total_profit, recent_orders
 
 # Initialize database instance
 db = Database() 
